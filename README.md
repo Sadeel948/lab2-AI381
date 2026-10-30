@@ -168,3 +168,5 @@ sha256:83c04a82eee31269134cd786b97e5b3d525d1309bc5572600cecf22e6024a7dc
 
 AI381 — Machine Learning Operations  
 Jordan University of Science and Technology (JUST)
+
+<!-- Branch protection test -->
