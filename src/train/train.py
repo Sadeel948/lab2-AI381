@@ -5,7 +5,6 @@ import joblib
 import pandas as pd
 import sklearn
 
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 DATA_PATH = ROOT_DIR / "data" / "churn_v2.csv"

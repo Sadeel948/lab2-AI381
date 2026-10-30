@@ -3,8 +3,7 @@ from pathlib import Path
 import joblib
 import pandas as pd
 from fastapi import FastAPI
-from pydantic import BaseModel
-
+from pydantic import BaseModel, Field
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MODEL_PATH = ROOT_DIR / "models" / "model.joblib"
@@ -18,11 +17,11 @@ FEATURES = [
 ]
 
 class Customer(BaseModel):
-    tenure_months: int
-    monthly_fee: float
+    tenure_months: int = Field(ge=0)
+    monthly_fee: float = Field(ge=0)
     contract: str
     internet_service: str
-    support_calls: int
+    support_calls: int = Field(ge=0)
 
 app = FastAPI(title="AI381 Lab 1 churn API")
 model = joblib.load(MODEL_PATH)
