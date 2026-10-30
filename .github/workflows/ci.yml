@@ -1,7 +1,8 @@
-
-
-
 name: CI Pipeline
+
+permissions:
+  contents: read
+  packages: write
 
 on:
   push:
@@ -44,3 +45,15 @@ jobs:
           exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+
+      - name: Login to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      
+      - name: Tag image for GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker tag churn-api:${{ github.sha }} ghcr.io/${{ github.repository_owner }}/lab2-ai381:${{ github.sha }}
+
+      - name: Push image to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker push ghcr.io/${{ github.repository_owner }}/lab2-ai381:${{ github.sha }}
