@@ -1,93 +1,63 @@
+"""Train the churn model, check its quality, and save it with metadata that says exactly what it is.
 
+python -m src.train.train
+"""
+
+import hashlib
+import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
 import pandas as pd
-import sklearn
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+from src import schema
 
-DATA_PATH = ROOT_DIR / "data" / "churn_v2.csv"
-MODEL_PATH = ROOT_DIR / "models" / "model.joblib"
-
-FEATURES = [
-    "tenure_months",
-    "monthly_fee",
-    "support_calls",
-    "contract",
-    "internet_service",
-]
-
-TARGET = "churn"
-EXPECTED_SKLEARN_VERSION = "1.9.1"
+DATA_FILE = "data/churn_v1.csv"  # the data file the model is trained on
+MIN_AUC = 0.70  # quality gate: a worse model never gets packaged
+MODEL_DIR = Path(os.getenv("MODEL_DIR", "models"))
 
 
-def load_dataset():
-    """Load the dataset and validate its required columns."""
-    if not DATA_PATH.exists():
-        raise FileNotFoundError(f"Dataset not found: {DATA_PATH}")
-
-    df = pd.read_csv(DATA_PATH)
-
-    required_columns = FEATURES + [TARGET]
-    missing = set(required_columns) - set(df.columns)
-
-    if missing:
-        raise ValueError(f"Missing columns: {sorted(missing)}")
-
-    if df.empty:
-        raise ValueError("The dataset is empty.")
-
-    if df[TARGET].isna().any():
-        raise ValueError("The target column contains missing values.")
-
-    if not df[TARGET].isin([0, 1]).all():
-        raise ValueError("The target must contain only 0 and 1.")
-
-    return df
+def build_model() -> Pipeline:
+    prep = ColumnTransformer(
+        [
+            ("num", StandardScaler(), schema.NUMERIC),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), schema.CATEGORICAL),
+        ]
+    )
+    return Pipeline([("prep", prep), ("clf", LogisticRegression(max_iter=1000))])
 
 
-def load_existing_model(df):
-    """Load the saved model and verify that it makes predictions."""
+def train(data_file: str = DATA_FILE, out_dir: Path = MODEL_DIR) -> dict:
+    df = schema.validate(pd.read_csv(data_file))
+    X, y = df[schema.FEATURES], df[schema.TARGET]
+    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    model = build_model().fit(X_tr, y_tr)
+    proba = model.predict_proba(X_te)[:, 1]
+    auc, f1 = roc_auc_score(y_te, proba), f1_score(y_te, proba > 0.5)
+    if auc < MIN_AUC:
+        raise SystemExit(f"Quality gate failed: AUC {auc:.3f} is below {MIN_AUC}")
 
-    if sklearn.__version__ != EXPECTED_SKLEARN_VERSION:
-        raise RuntimeError(
-            f"Expected scikit-learn {EXPECTED_SKLEARN_VERSION}, "
-            f"but found {sklearn.__version__}."
-        )
-
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
-
-    model = joblib.load(MODEL_PATH)
-
-    model_features = list(model.feature_names_in_)
-
-    if model_features != FEATURES:
-        raise ValueError(
-            f"Model features do not match. Got: {model_features}"
-        )
-
-    sample = df[FEATURES].head(5)
-    predictions = model.predict(sample)
-
-    if len(predictions) != len(sample):
-        raise ValueError("Unexpected number of predictions.")
-
-    if not set(predictions).issubset({0, 1}):
-        raise ValueError("The model returned unexpected labels.")
-
-    return model
-
-def main():
-    """Load the dataset and validate the existing model."""
-    df = load_dataset()
-    model = load_existing_model(df)
-
-    print(f"Dataset loaded: {len(df)} rows")
-    print("Model loaded successfully.")
-    print("Sample predictions:", model.predict(df[FEATURES].head(5)))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, out_dir / "model.joblib")
+    meta = {
+        "model_version": os.getenv("GIT_SHA", "local")[:7],
+        "data_file": data_file,
+        "data_sha256": hashlib.sha256(Path(data_file).read_bytes()).hexdigest()[:12],
+        "auc": round(auc, 3),
+        "f1": round(f1, 3),
+        "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    (out_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+    return meta
 
 
 if __name__ == "__main__":
-    main()
+    print(json.dumps(train(), indent=2))

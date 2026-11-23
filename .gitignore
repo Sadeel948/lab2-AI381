@@ -1,13 +1,23 @@
-# Python virtual environment
 .venv/
-
-# Python cache files
 __pycache__/
-*.py[cod]
+*.pyc
 .pytest_cache/
-
-# Environment variables
-.env
-
-# Jupyter checkpoints
-.ipynb_checkpoints/
+.ruff_cache/
+models/
+artifacts/*
+!artifacts/.gitkeep
+!artifacts/champion.json
+!artifacts/metadata.json
+!artifacts/model.joblib
+reports/
+mlflow.db
+mlruns/
+mlartifacts/
+infra/.terraform/
+infra/*.tfstate*
+infra/backend.hcl
+infra/terraform.tfvars
+infra/tfplan
+.venv312/
+trivy-report.json
+*:Zone.Identifier
