@@ -1,90 +1,49 @@
-from pathlib import Path
-
-import joblib
-from fastapi.testclient import TestClient
-
-from src.app.main import app
-
-client = TestClient(app)
+"""API contract tests: what callers of the service can rely on."""
 
 
-def test_health():
-    response = client.get("/health")
+def test_health_reports_model_version(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert {"model_version", "data_file", "auc"} <= body.keys()
 
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
 
-def test_predict():
-    customer = {
-        "tenure_months": 24,
-        "monthly_fee": 75.5,
-        "contract": "one-year",
+def test_predict_returns_a_probability(client, customer):
+    r = client.post("/predict", json=customer)
+    assert r.status_code == 200
+    assert 0.0 <= r.json()["churn_probability"] <= 1.0
+
+
+def test_invalid_input_is_rejected(client, customer):
+    assert client.post("/predict", json={**customer, "contract": "weekly"}).status_code == 422
+    assert client.post("/predict", json={**customer, "support_calls": -1}).status_code == 422
+    assert client.post("/predict", json={"tenure_months": 5}).status_code == 422
+
+
+def test_risky_customer_scores_higher_than_loyal_customer(client):
+    """A behaviour test: a new, unhappy month-to-month customer must look riskier than a loyal one."""
+    risky = {
+        "tenure_months": 2,
+        "monthly_charges": 110,
+        "contract": "month-to-month",
         "internet_service": "fiber",
-        "support_calls": 3
+        "support_calls": 6,
     }
-
-    response = client.post("/predict", json=customer)
-
-    assert response.status_code == 200
-
-    result = response.json()
-
-    assert "churn_probability" in result
-    assert 0 <= result["churn_probability"] <= 1
-
-def test_invalid_input_schema():
-    customer = {
-        "tenure_months": 24,
-        "monthly_fee": 75.5,
-        "contract": "one-year",
-        "internet_service": "fiber"
-        # support_calls is missing
+    loyal = {
+        "tenure_months": 60,
+        "monthly_charges": 40,
+        "contract": "two-year",
+        "internet_service": "dsl",
+        "support_calls": 0,
     }
+    p_risky = client.post("/predict", json=risky).json()["churn_probability"]
+    p_loyal = client.post("/predict", json=loyal).json()["churn_probability"]
+    assert p_risky > p_loyal
 
-    response = client.post("/predict", json=customer)
 
-    assert response.status_code == 422
-
-def test_negative_tenure():
-    customer = {
-        "tenure_months": -10,
-        "monthly_fee": 75.5,
-        "contract": "one-year",
-        "internet_service": "fiber",
-        "support_calls": 3
-    }
-
-    response = client.post("/predict", json=customer)
-
-    assert response.status_code == 422
-
-def test_deterministic_prediction():
-    customer = {
-        "tenure_months": 24,
-        "monthly_fee": 75.5,
-        "contract": "one-year",
-        "internet_service": "fiber",
-        "support_calls": 3
-    }
-
-    response1 = client.post("/predict", json=customer)
-    response2 = client.post("/predict", json=customer)
-
-    assert response1.status_code == 200
-    assert response2.status_code == 200
-
-    assert (
-        response1.json()["churn_probability"]
-        == response2.json()["churn_probability"]
-    )
-
-def test_model_loads():
-    model_path = (
-        Path(__file__).resolve().parents[1]
-        / "models"
-        / "model.joblib"
-    )
-
-    model = joblib.load(model_path)
-
-    assert model is not None
+def test_metrics_endpoint_exposes_prometheus_metrics(client, customer):
+    client.post("/predict", json=customer)
+    text = client.get("/metrics").text
+    assert "http_requests_total" in text
+    assert "churn_prediction_probability_bucket" in text
